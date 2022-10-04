@@ -1,0 +1,64 @@
+var country = 'CH';  
+var countries = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+var table = countries.filter(ee.Filter.eq('country_co', ee.String(country))); 
+
+// Make the clip boundary.
+var clipToCol = function(image){
+  return image.clip(table);
+};
+
+// Make a cloud-free Landsat 7 TOA composite (from raw imagery).
+var l8 = ee.ImageCollection('LANDSAT/LE07/C01/T1')
+                            .map(clipToCol);
+
+var image = ee.Algorithms.Landsat.simpleComposite({
+  collection: l8.filterDate('2000-01-01', '2000-12-31'),
+  asFloat: true
+});
+
+// Use these bands for prediction. We only used the multiespectral bands
+var bands = ['B1','B2', 'B3', 'B4', 'B5', 'B7'];
+
+// Manually created polygons. Only I add two polygons to each category forest or non-forest
+var forest1 = ee.Geometry.Rectangle(106.024466, 28.470375,106.114408, 28.385354);
+var forest2 = ee.Geometry.Rectangle(123.926517, 52.129826,  124.431256, 51.743099);
+var nonForest1 = ee.Geometry.Rectangle( 82.564232,40.174726, 85.900993, 38.822149);
+var nonForest2 = ee.Geometry.Rectangle(100.003374,37.005547,100.315863,36.751742);
+
+// Make a FeatureCollection from the hand-made geometries.
+var polygons = ee.FeatureCollection([
+  ee.Feature(nonForest1, {'class': 0}),
+  ee.Feature(nonForest2, {'class': 0}),
+  ee.Feature(forest1, {'class': 1}),
+  ee.Feature(forest2, {'class': 1}),
+]);
+
+// Get the values for all pixels in each polygon in the training.
+var training = image.sampleRegions({
+  // Get the sample from the polygons FeatureCollection.
+  collection: polygons,
+  // Keep this list of properties from the polygons.
+  properties: ['class'],
+  // Set the scale to get Landsat pixels in the polygons.
+  scale: 1000
+});
+
+// Create an SVM classifier with custom parameters.
+var classifier = ee.Classifier.libsvm({
+  kernelType: 'RBF',
+  gamma: 0.5,
+  cost: 10
+});
+
+// Train the classifier.
+var trained = classifier.train(training, 'class', bands);
+
+// Classify the image.
+var classified = image.classify(trained);
+
+// Display the classification result and the input image.
+Map.centerObject(table,4);
+Map.addLayer(polygons, {}, 'training polygons');
+Map.addLayer(classified,
+             {min: 0, max: 1, palette: ['red', 'green']},
+             'deforestation');

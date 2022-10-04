@@ -1,0 +1,20 @@
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+var urban = ee.FeatureCollection("users/cesarivanalvarezmendoza/shapefiles/PLOTS4326")
+
+var geometry = urban.geometry()
+
+var rgbVis = {
+  min: 0.0,
+  max: 3000,
+  bands: ['B4', 'B3', 'B2'], 
+};
+var filtered = s2.filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+  .filter(ee.Filter.date('2021-01-01', '2022-01-01'))
+  .filter(ee.Filter.bounds(geometry))
+
+var image = filtered.median(); 
+
+var clipped = image.clip(geometry)
+
+Map.centerObject(urban,17)
+Map.addLayer(clipped, rgbVis, 'Clipped')

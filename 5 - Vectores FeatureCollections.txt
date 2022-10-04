@@ -1,0 +1,8 @@
+var country = 'BL';  //Choose the country initials [Two-letter FIPS country code](https://en.wikipedia.org/wiki/List_of_FIPS_country_codes
+
+// Load country features from Large Scale International Boundary (LSIB) dataset.
+var countries = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+var table = countries.filter(ee.Filter.eq('country_co', ee.String(country)));
+
+Map.centerObject(table,5);
+Map.addLayer(table, {color: 'red'})

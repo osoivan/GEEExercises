@@ -1,0 +1,24 @@
+var geometry = ee.Geometry.Point([-78.5, 0.02])
+
+var filtered = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+                  .filterDate('2020-01-01', '2022-01-01')
+                  // Pre-filter to get less cloudy granules.
+                  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',20))
+                  .filter(ee.Filter.bounds(geometry));
+
+var mosaic = filtered.mosaic() //Crea un mosaico con los últimos pixeles de la colección encontrados
+ 
+var medianComposite = filtered.median(); //Genera una mediana de pixeles entre fechas
+
+var rgbVis = {
+  min: 0.0,
+  max: 3000,
+  bands: ['B4', 'B3', 'B2'],
+};
+
+// set styling
+Map.centerObject(geometry, 15)
+Map.addLayer(filtered, rgbVis, 'Colección original');
+Map.addLayer(mosaic, rgbVis, 'Mosaico');
+Map.addLayer(medianComposite, rgbVis, 'Composición mediana')
+Map.addLayer(geometry,{color: 'red', pointSize: 30, pointShape: 'circle'}, 'Punto');

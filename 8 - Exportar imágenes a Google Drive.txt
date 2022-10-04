@@ -1,0 +1,36 @@
+var country = 'BL';  //Choose the country initials [Two-letter FIPS country code] https://en.wikipedia.org/wiki/List_of_FIPS_country_codes
+
+// Load country features from Large Scale International Boundary (LSIB) dataset.
+var countries = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+var table = countries.filter(ee.Filter.eq('country_co', ee.String(country)));
+
+// Make the clip boundary.
+var clipToCol = function(image){
+  return image.clip(table);
+};
+
+var collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+  .select('NO2_column_number_density')
+  .filterBounds(table)
+  .filterDate('2019-03-16', '2019-03-31')
+  .map(clipToCol);
+
+var band_viz = {
+  min: 0,
+  max: 0.00009,
+  palette: ['green','yellow', 'red']
+};
+
+Map.addLayer(collection.median(), band_viz, 'S5P N02');
+Map.addLayer(table);
+Map.centerObject(table,5);
+
+print(collection.size())
+
+// Export the image, specifying scale and region.
+Export.image.toDrive({
+  image: collection.median(),
+  description: 'Bolivia_2019',
+  scale: 10000,
+  region: table
+});
