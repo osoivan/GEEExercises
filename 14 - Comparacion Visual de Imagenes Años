@@ -1,0 +1,110 @@
+// Definir la región de interés (Quito, Ecuador)
+var quito = ee.Geometry.Point([-78.4678, -0.1807]).buffer(20000);
+
+// Función para filtrar y escalar las imágenes Landsat
+function getLandsatImage(year, collectionName) {
+  var collection = ee.ImageCollection(collectionName)
+    .filterDate(year + '-01-01', year + '-12-31')
+    .filterBounds(quito)
+    .filter(ee.Filter.lt('CLOUD_COVER', 50))
+    .sort('CLOUD_COVER');
+
+  // Calcular la mediana de la colección
+  var image = collection.median(); 
+  return applyScaleFactors(image);
+}
+
+// Aplica factores de escala
+function applyScaleFactors(image) {
+  var opticalBands = image.select('SR_B.')
+                          .multiply(0.0000275)
+                          .add(-0.2);
+  var thermalBands = image.select('ST_B.*').multiply(0.00341802).add(149.0).add(-273.15);
+  return image.addBands(opticalBands, null, true)
+              .addBands(thermalBands, null, true);
+}
+
+// Definir parámetros de visualización
+var visParams = {
+  bands: ['SR_B4', 'SR_B3', 'SR_B2'],
+  min: 0,
+  max: 0.3,
+};
+
+// Crear dos paneles de mapas para comparar las imágenes
+var leftMap = ui.Map();
+var rightMap = ui.Map();
+var linker = ui.Map.Linker([leftMap, rightMap]);
+
+// Centrar ambos mapas en Quito
+leftMap.centerObject(quito, 10);
+rightMap.centerObject(quito, 10);
+
+// Crear cuadros de texto para seleccionar el año
+var year2014Input = ui.Textbox({placeholder: 'Año (2013-2021)', value: '2014'});
+var year2023Input = ui.Textbox({placeholder: 'Año (2021-2024)', value: '2023'});
+
+// Crear etiquetas para mostrar el año seleccionado en cada mapa
+var leftLabel = ui.Label('', {position: 'top-center', fontWeight: 'bold', color: 'white', backgroundColor: 'black'});
+var rightLabel = ui.Label('', {position: 'top-center', fontWeight: 'bold', color: 'white', backgroundColor: 'black'});
+
+leftMap.add(leftLabel);
+rightMap.add(rightLabel);
+
+// Función para actualizar las imágenes en función del año seleccionado
+function updateMaps() {
+  var year2014 = parseInt(year2014Input.getValue(), 10);
+  var year2023 = parseInt(year2023Input.getValue(), 10);
+
+  // Verificar y ajustar los valores de los años
+  if (year2014 < 2013 || year2014 > 2021) {
+    year2014Input.setValue('2014');
+    year2014 = 2014;
+  }
+  if (year2023 < 2021 || year2023 > 2024) {
+    year2023Input.setValue('2023');
+    year2023 = 2023;
+  }
+
+  // Obtener imágenes Landsat para los años seleccionados
+  var landsat2014 = getLandsatImage(year2014, 'LANDSAT/LC08/C02/T1_L2');
+  var landsat2023 = getLandsatImage(year2023, 'LANDSAT/LC09/C02/T1_L2');
+
+  // Verificar si las imágenes existen antes de agregarlas al mapa
+  if (landsat2014) {
+    leftMap.layers().set(0, ui.Map.Layer(landsat2014, visParams, 'Landsat 8 - ' + year2014));
+    leftLabel.setValue('Año: ' + year2014 + ' (Valor mediano)');
+  } else {
+    leftLabel.setValue('No hay datos para ' + year2014);
+  }
+
+  if (landsat2023) {
+    rightMap.layers().set(0, ui.Map.Layer(landsat2023, visParams, 'Landsat 9 - ' + year2023));
+    rightLabel.setValue('Año: ' + year2023 + ' (Valor mediano)');
+  } else {
+    rightLabel.setValue('No hay datos para ' + year2023);
+  }
+}
+
+// Actualizar mapas al cambiar los cuadros de texto
+year2014Input.onChange(updateMaps);
+year2023Input.onChange(updateMaps);
+
+// Paneles para los inputs de los años
+var controlPanel = ui.Panel([ui.Label('Selecciona el año para cada imagen:'),
+                             ui.Panel([ui.Label('Landsat 8 (2013-2021):'), year2014Input]),
+                             ui.Panel([ui.Label('Landsat 9 (2021-2024):'), year2023Input])]);
+
+// Crear la interfaz dividida
+var splitPanel = ui.SplitPanel({
+  firstPanel: leftMap,
+  secondPanel: rightMap,
+  orientation: 'horizontal',
+  wipe: true,
+});
+
+// Añadir los controles y el panel dividido a la interfaz del GEE
+ui.root.widgets().reset([controlPanel, splitPanel]);
+
+// Inicializar la visualización de los mapas
+updateMaps();
