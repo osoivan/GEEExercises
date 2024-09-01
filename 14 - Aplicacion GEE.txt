@@ -1,0 +1,189 @@
+/////////////////NDVI COMPUTATION AND IMAGE SELECTION CODES/////////////////
+//Choosing the Country from the Feature Collection located in GEE
+var country = 'EC'; 
+var countries = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017');
+var table = countries.filter(ee.Filter.eq('country_co', ee.String(country)));
+var geometry = table.geometry()
+
+//Set the Satellite image as base map
+Map.setOptions('Satellite')
+
+//SENTINEL-2
+//Select the Sentinel-2 images to 2022
+var S2_2022 = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))
+  .filter(ee.Filter.date('2022-01-01', '2023-01-01'))
+  .filter(ee.Filter.bounds(geometry))
+// Write a function that computes NDVI for an image and adds it as a band to Sentinel-2
+function S2NDVI(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('ndvi');
+  return image.addBands(ndvi);
+}
+// Map the function over the collection of Sentinel-2
+var S2NDVI_I = S2_2022.map(S2NDVI);
+var S2NDVI_I = S2NDVI_I.median()
+var S2NDVI_I = S2NDVI_I.select('ndvi').clip(geometry)
+
+//LANDSAT-8
+//Select the Landsat-8 images to 2013 - 2015
+var L8_2014 = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+    .filterDate('2013-01-01', '2016-01-01')
+     .filterMetadata('CLOUD_COVER', 'Less_Than', 30)
+     .filter(ee.Filter.bounds(geometry))
+//Function to compute NDVI using Landsat-8
+function L8NDVI(image) {
+  var ndvi = image.normalizedDifference(['SR_B5', 'SR_B4']).rename('ndvi');
+  return image.addBands(ndvi);
+}
+// Map the function over the collection of Landsat-8
+var L8NDVI_I = L8_2014.map(L8NDVI);
+var L8NDVI_I = L8NDVI_I.median()
+var L8NDVI_I = L8NDVI_I.select('ndvi').clip(geometry)
+
+//LANDSAT-7
+//Select the Landsat-7 images to 2000 - 2002
+var L7_2001 = ee.ImageCollection('LANDSAT/LE07/C02/T1_L2')
+    .filterDate('2000-01-01', '2002-01-01')
+     .filterMetadata('CLOUD_COVER', 'Less_Than', 30)
+     .filter(ee.Filter.bounds(geometry))
+//Function to compute NDVI using Landsat-8
+function L7NDVI(image) {
+  var ndvi = image.normalizedDifference(['SR_B4', 'SR_B3']).rename('ndvi');
+  return image.addBands(ndvi);
+}
+// Map the function over the collection of Landsat-7
+var L7NDVI_I = L7_2001.map(L7NDVI);
+var L7NDVI_I2 = L7NDVI_I
+var L7NDVI_I = L7NDVI_I.median()
+var L7NDVI_I = L7NDVI_I.select('ndvi').clip(geometry)
+
+//Showing the country boundaries
+Map.centerObject(table,7);
+Map.addLayer(table, {color: 'red'}, 'Country Boundary')
+
+//Creating the color palette to NDVI
+var palette = [
+  'FFFFFF', 'CE7E45', 'DF923D', 'F1B555', 'FCD163', '99B718',
+  '74A901', '66A000', '529400', '3E8601', '207401', '056201',
+  '004C00', '023B01', '012E01', '011D01', '011301'];
+var ndviVis = {min:0, max:1, palette: palette }
+
+//Adding data to map
+var S2NDVI_S = ui.Map.Layer(S2NDVI_I, ndviVis, '2022 NDVI',false)
+Map.add(S2NDVI_S)
+var L8NDVI_S = ui.Map.Layer(L8NDVI_I, ndviVis, '2014 NDVI',false)
+Map.add(L8NDVI_S)
+var L7NDVI_S = ui.Map.Layer(L7NDVI_I, ndviVis, '2001 NDVI',false)
+Map.add(L7NDVI_S)
+
+
+
+
+/////////////////APPLICATION CUSTOMS/////////////////
+//App Title
+Map.style().set('cursor', 'crosshair');
+var header = ui.Label('NDVI in Ecuador during the last 20 years', 
+            {fontSize: '25px', fontWeight: 'bold', color: '484848', textAlign: 'center'});
+
+//App summary
+var text = ui.Label(
+  'NDVI in Ecuador' +
+  ' Using Landsat-7 (2000-2002), Landsat-8 (2013-2015) and Sentinel-2 (2022-2023).',
+    {fontSize: '15px', textAlign: 'center', color: 'green'});
+    
+// Create a panel to hold text
+var panel = ui.Panel({
+  widgets:[header, text],//Adds header and text
+  style:{width: '300px',position:'top-center'}});
+
+var intro = ui.Panel([
+  ui.Label({
+    value: 'Credits: Cesar I. Alvarez-Mendoza PhD.',
+    style: {fontWeight: 'bold',  color: 'black',textAlign: 'center'},
+  }),
+  ui.Label({
+    value: '___________________________________________',
+    style: {fontWeight: 'bold',  color: 'black'},
+  }),
+  ui.Label({
+    value:'Select layers to display.',
+    style: {fontSize: '15px', fontWeight: 'bold'}
+  })]);
+panel.add(intro)
+
+//Add this main panel
+ui.root.insert(1,panel)
+
+//Add more text
+var extLabel = ui.Label({value:'Ecuador NDVI by periods',
+style: {fontWeight: 'bold', fontSize: '16px', margin: '10px 5px'}
+});
+
+//Checks to select the NDVI layer
+var extCheck = ui.Checkbox('Landsat-7 (2000-2002)').setValue(false); //false = unchecked
+var extCheck2 = ui.Checkbox('Landsat-8 (2013-2015)').setValue(false);// 
+var extCheck3 = ui.Checkbox('Sentinel-2 (2022-2023)').setValue(false);
+
+//Function to create the legend using the palette of NDVI
+function makeLegend (ndviVis) {
+  var lon = ee.Image.pixelLonLat().select('longitude');
+  var gradient = lon.multiply((ndviVis.max-ndviVis.min)/100.0).add(ndviVis.min);
+  var legendImage = gradient.visualize(ndviVis);
+  
+  var thumb = ui.Thumbnail({
+    image: legendImage, 
+    params: {bbox:'0,0,100,8', dimensions:'256x20'},  
+    style: {position: 'bottom-center'}
+  });
+  var panel2 = ui.Panel({
+    widgets: [
+      ui.Label('0 - Unhealthy'), 
+      ui.Label({style: {stretch: 'horizontal'}}), 
+      ui.Label('1 - Very Healty')
+    ],
+    layout: ui.Panel.Layout.flow('horizontal'),
+    style: {stretch: 'horizontal', maxWidth: '270px', padding: '0px 0px 0px 8px'}
+  });
+  return ui.Panel().add(panel2).add(thumb);
+}
+
+//Add an image or logo to explain your project
+var ndviexplained = ee.Image("projects/ee-cesarivanalvarezmendoza/assets/logos_images/ndviexplained");
+var explanation = ui.Thumbnail({image:ndviexplained,params:{bands:['b1','b2','b3'],min:0,max:255},style:{width:'250px',height:'120px'}});
+
+//Image credit links
+var imgCredits = ui.Label('Link NDVI reference'); 
+  imgCredits.style().set({margin: '1px 0px 2px 10px', fontSize: '12px'});
+  imgCredits.setUrl('https://eos.com/blog/ndvi-faq-all-you-need-to-know-about-ndvi/');
+
+//Add widgets to the main panel
+panel.add(extLabel)
+      .add(extCheck)
+      .add(extCheck2)
+      .add(extCheck3)
+      .add(makeLegend(ndviVis))
+      .add(explanation)
+      .add(imgCredits)
+
+//Layer to assign for each checkbox
+//Extent Landsat-7 2001
+var doCheckbox = function() {
+  extCheck.onChange(function(checked){
+  L7NDVI_S.setShown(checked)
+  })
+}
+doCheckbox();
+//Extent Landsat-8 2014
+var doCheckbox2 = function() {
+  extCheck2.onChange(function(checked){
+  L8NDVI_S.setShown(checked)
+  })
+}
+doCheckbox2();
+//Extent Sentinel-2 2022
+var doCheckbox3 = function() {
+  extCheck3.onChange(function(checked){
+  S2NDVI_S.setShown(checked)
+  })
+}
+doCheckbox3();
