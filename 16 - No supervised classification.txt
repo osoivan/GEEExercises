@@ -1,0 +1,212 @@
+
+// USER CHANGE HERE THE VARIABLES
+var geometry = ee.FeatureCollection("projects/ee-cesarivanalvarezmendoza/assets/mine_pit"); 
+// Define the variable for the year. Change this single number to change the time period.
+var YEAR = 2020; 
+
+
+// ====================================================================================
+// PART 1: Setup and Geometry Loading and Date Definition
+// ====================================================================================
+
+// Convert YEAR to a string for date and layer naming.
+var YEAR_STR = YEAR.toString(); 
+
+// Define the time period using the YEAR_STR variable and string concatenation.
+var START_DATE = YEAR_STR + '-01-01';
+var END_DATE = YEAR_STR + '-12-31';
+
+// Center the map on the region of interest.
+Map.centerObject(geometry, 12);
+
+// ====================================================================================
+// PART 2: Landsat Processing (Indices, LST, and RGB) - SYNCHRONIZED
+// ====================================================================================
+
+// Landsat 8/9 Band Name Mapping (Surface Reflectance and Thermal)
+var L8_BAND_NAMES = ['SR_B2', 'SR_B3', 'SR_B4', 'SR_B5', 'SR_B6', 'SR_B7', 'ST_B10', 'QA_PIXEL'];
+var STD_BAND_NAMES = ['blue', 'green', 'red', 'nir', 'swir1', 'swir2', 'thermal', 'QA_PIXEL'];
+
+// Function to mask clouds for Landsat 8/9
+var maskL89 = function(image) {
+  var qa = image.select('QA_PIXEL');
+  var cloudBitMask = (1 << 3); 
+  var cloudShadowBitMask = (1 << 4); 
+  
+  var mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0)
+                 .and(qa.bitwiseAnd(cloudBitMask).eq(0));
+
+  var maskedImage = image.select(L8_BAND_NAMES).updateMask(mask)
+    .rename(STD_BAND_NAMES); 
+
+  var scaledReflectance = maskedImage.select('blue', 'green', 'red', 'nir', 'swir1', 'swir2')
+    .divide(10000);
+    
+  var otherBands = maskedImage.select('thermal', 'QA_PIXEL');
+  
+  return scaledReflectance.addBands(otherBands)
+    .copyProperties(image, ['system:time_start']);
+};
+
+// Function to compute Landsat 8/9 indices and LST
+var addIndicesAndLST = function(image) {
+  var nir = image.select('nir');
+  var red = image.select('red');
+  var swir1 = image.select('swir1');
+  var swir2 = image.select('swir2');
+  var blue = image.select('blue');
+  var thermal = image.select('thermal');
+  
+  // EVI
+  var evi = image.expression('2.5 * ((NIR - RED) / (NIR + 6 * RED - 7.5 * BLUE + 1))', 
+    {'NIR': nir, 'RED': red, 'BLUE': blue}).rename('EVI');
+  
+  // NBR
+  var nbr = nir.subtract(swir2).divide(nir.add(swir2)).rename('NBR');
+  
+  // NDMI
+  var ndmi = nir.subtract(swir1).divide(nir.add(swir1)).rename('NDMI');
+  
+  // NDWI
+  var ndwi = image.select('green').subtract(nir).divide(image.select('green').add(nir)).rename('NDWI');
+  
+  // NDBI
+  var ndbi = swir1.subtract(nir).divide(swir1.add(nir)).rename('NDBI');
+  
+  // LST/NDBaI Thermal Scaling
+  var thermal_scaled = thermal.multiply(0.00341802).add(149.0); // Convert to Kelvin
+  
+  // NDBaI
+  var ndbai = swir1.subtract(thermal_scaled).divide(swir1.add(thermal_scaled)).rename('NDBaI');
+  
+  // LST (°C)
+  var lst_celsius = thermal_scaled.subtract(273.15).rename('LST');
+
+  return image.addBands([evi, nbr, ndmi, ndwi, ndbi, ndbai, lst_celsius]);
+};
+
+// Filter Landsat collections using the defined time frame
+var l8Collection = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+  .filterBounds(geometry)
+  .filterDate(START_DATE, END_DATE)
+  .map(maskL89)
+  .map(addIndicesAndLST);
+
+var l9Collection = ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
+  .filterBounds(geometry)
+  .filterDate(START_DATE, END_DATE)
+  .map(maskL89)
+  .map(addIndicesAndLST);
+
+var combinedLandsat = l8Collection.merge(l9Collection);
+
+// Create a median composite
+var landsatComposite = combinedLandsat
+  .median()
+  .clip(geometry);
+
+// --- Landsat RGB Visualization ---
+var visParamsRGB_L = {
+  bands: ['red', 'green', 'blue'],
+  min: 0.0,
+  max: 2.0
+};
+Map.addLayer(landsatComposite, visParamsRGB_L, 'Landsat RGB Composite ' + YEAR_STR);
+
+// Visualization parameters for the indices
+var visParamsEVI = {min: 0, max: 0.1, palette: ['ff0000', 'ffdd00', '009900']};
+var visParamsNDWI = {min: -0.1, max: 0.1, palette: ['0000ff', 'ffffff', '00ff00']};
+var visParamsLST = {min: 15, max: 60, palette: ['0000ff', '00ffff', 'ffff00', 'ff0000']};
+
+// Add computed layers to the map, named by year
+Map.addLayer(landsatComposite.select('EVI'), visParamsEVI, 'EVI ' + YEAR_STR);
+Map.addLayer(landsatComposite.select('NDWI'), visParamsNDWI, 'NDWI ' + YEAR_STR);
+Map.addLayer(landsatComposite.select('LST'), visParamsLST, 'LST (°C) ' + YEAR_STR);
+
+// ====================================================================================
+// PART 3: Sentinel-2 Unsupervised Classification - Robust Composite Creation
+// ====================================================================================
+
+// Sentinel-2 cloud masking function 
+function cloudMaskS2(image){
+  var bandsToKeep = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12', 'SCL'];
+  var img = image.select(bandsToKeep);
+  var scl = img.select('SCL');
+  
+  var mask = scl.eq(3).or(scl.gte(7).and(scl.lte(10))).eq(0);
+  
+  var scaledImage = img.select(['B2', 'B3', 'B4', 'B8', 'B11', 'B12'])
+                       .divide(10000)
+                       .updateMask(mask);
+                       
+  return scaledImage.copyProperties(image, ['system:time_start']);
+}
+
+// 1. Prepare the Sentinel-2 image collection
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED');
+
+var s2Collection = s2.filterBounds(geometry)
+  .filterDate(START_DATE, END_DATE)
+  .map(cloudMaskS2);
+  
+print('Sentinel-2 Images (' + YEAR_STR + ') available after cloud masking:', s2Collection.size());
+
+// 2. Create the composite with a safety check (Median with Mosaic Fallback)
+var s2Composite_median = s2Collection.median().clip(geometry);
+
+var hasBands = s2Composite_median.bandNames().size();
+var s2Composite = ee.Algorithms.If(
+  hasBands.eq(0), 
+  s2Collection.mosaic().clip(geometry), // Fallback: mosaic the collection
+  s2Composite_median // Original: use the median composite
+);
+s2Composite = ee.Image(s2Composite);
+
+print('Bands in final S2 Composite:', s2Composite.bandNames());
+
+// --- Sentinel-2 RGB Visualization ---
+var visParamsRGB_S2 = { 
+  min: 0.0, 
+  max: 0.3, 
+  bands: ['B4', 'B3', 'B2'] // Red, Green, Blue bands
+};
+Map.addLayer(s2Composite, visParamsRGB_S2, 'Sentinel-2 RGB Composite ' + YEAR_STR);
+
+// Visualization parameters for the composite (False Color: NIR/SWIR1/Red)
+var visParamsS2_FalseColor = { 
+  min: 0.0, max: 0.5, 
+  bands: ['B8', 'B11', 'B4'] // NIR, SWIR1, Red
+};
+Map.addLayer(s2Composite, visParamsS2_FalseColor, 'Sentinel-2 False Color ' + YEAR_STR);
+
+
+// 3. Extract raster values from the images for training
+var trainingBands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12'];
+var samples = s2Composite.select(trainingBands).sample({
+  scale: 10,
+  region: geometry,
+  numPixels: 50000, 
+  tileScale: 4
+});
+
+// 4. Create a clusterer model using K-Means with 5 classes
+var NUM_CLASSES = 5;
+var clusterer = ee.Clusterer.wekaKMeans(NUM_CLASSES).train(samples);
+
+// 5. Apply the model to the image
+var clusters = s2Composite.select(trainingBands).cluster(clusterer);
+
+// 6. Show the classification image on the map
+var palette15 = [
+  '05450a', '086a10', '54a708', '78d203', '009900', 
+  'c6b044', 'dcd159', 'dade48', 'fbff13', 
+  'b600ff', 'ff00ff', 
+  '45c2a5', '39a9c6', 
+  'ff0000', '808080'
+];
+
+Map.addLayer(clusters.randomVisualizer().clip(geometry), {}, 'S2 Clusters Random ' + YEAR_STR);
+Map.addLayer(clusters.clip(geometry), { palette: palette15, min: 0, max: NUM_CLASSES - 1 }, 'S2 Unsupervised Classification (' + NUM_CLASSES + ' Classes) ' + YEAR_STR);
+
+print('Training Samples', samples.size());
+print('Clusterer Info', clusterer.getInfo());
