@@ -1,5 +1,5 @@
 //Forest loss between 2000 to 2025
-var year = 25; //Choose the year between 2000 (00) to 2025 (20)
+var year = 25; //Choose the year between 2000 (00) to 2025 (25)
 var country = 'EC';  //Choose the country initials [Two-letter FIPS country code](https://en.wikipedia.org/wiki/List_of_FIPS_country_codes 
 
 // Load country features from Large Scale International Boundary (LSIB) dataset.
