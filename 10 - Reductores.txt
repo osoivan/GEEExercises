@@ -1,5 +1,5 @@
-//Forest loss between 2000 to 2020
-var year = 20; //Choose the year between 2000 (00) to 2020 (20)
+//Forest loss between 2000 to 2025
+var year = 25; //Choose the year between 2000 (00) to 2025 (20)
 var country = 'EC';  //Choose the country initials [Two-letter FIPS country code](https://en.wikipedia.org/wiki/List_of_FIPS_country_codes 
 
 // Load country features from Large Scale International Boundary (LSIB) dataset.
@@ -11,10 +11,10 @@ var clipToCol = function(image){
   return image.clip(selected);
 };
 
-var gfc2020 = ee.Image('UMD/hansen/global_forest_change_2020_v1_8');
+var gfc2025 = ee.Image('UMD/hansen/global_forest_change_2025_v1_13');
 
 // Canopy loss during the selected year
-var loss = gfc2020.select(['lossyear']).eq(year).clip(selected) //ClipGeometry can any geometry or feature or shapfile
+var loss = gfc2025.select(['lossyear']).eq(year).clip(selected) //ClipGeometry can any geometry or feature or shapfile
 
 // Get the forest loss in square kilometers.
 var areaImage = loss.multiply(ee.Image.pixelArea()).divide(1000000);
@@ -31,7 +31,7 @@ print('Pixels representing loss during the year choosed: ', stats.get('lossyear'
 var losscolors = {
   bands: ['lossyear'],
   min: 0,
-  max: 20,
+  max: 1,
   palette: ['black', 'green']
 };
 Map.addLayer(loss, losscolors,'tree cover');
